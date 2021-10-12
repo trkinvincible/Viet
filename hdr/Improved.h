@@ -34,7 +34,8 @@ std::vector<std::string> Split(const std::string& input, const char delimiter){
     std::stringstream ss(input);
     std::string s;
     while (std::getline(ss, s, delimiter)) {
-        result.push_back(s);
+        if (!s.empty())
+            result.push_back(s);
     }
 
     return result;
@@ -92,7 +93,6 @@ template <typename Derived>
 class Visitable : public Order {
 
 public:
-    Visitable(std::string id, std::size_t deadline) : Order(id, deadline) {}
     using Order::Order;
 
     template<typename visitorType, typename orderType, typename = bool >
@@ -126,26 +126,18 @@ public:
 
 class DummyOrder : public Visitable<DummyOrder> {
     using Visitable<DummyOrder>::Visitable;
-public:
-    DummyOrder(std::string id, std::size_t deadline) : Visitable(id, deadline) {}
 };
 
 class Camera : public Visitable<Camera> {
     using Visitable<Camera>::Visitable;
-public:
-    Camera(std::string id, std::size_t deadline) : Visitable(id, deadline) {}
 };
 
 class Tripod : public Visitable<Tripod> {
     using Visitable<Tripod>::Visitable;
-public:
-    Tripod(std::string id, std::size_t deadline) : Visitable(id, deadline) {}
 };
 
 class Lens : public Visitable<Lens> {
     using Visitable<Lens>::Visitable;
-public:
-    Lens(std::string id, std::size_t deadline) : Visitable(id, deadline) {}
 };
 
 // Seperate Object creation and Algorithm which works with it.
