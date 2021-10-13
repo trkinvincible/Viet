@@ -43,23 +43,26 @@ std::vector<std::string> Split(const std::string& input, const char delimiter){
 
 // Need to seperate out "Manufacturing" process and "Order" Object. Maybe another feature would need to add some other operation with "Order" So per SOLID principle
 // Class is closed for modification Open for extension.
-
 class Visitor;
 
 class Order{
 
 public:
-    Order(std::string id, std::size_t deadline)
+    virtual ~Order() {
+        m_id.clear();
+    }
+
+    Order(std::string &&id, std::size_t deadline)
         : m_id(std::move(id)), m_deadline(deadline) {}
 
-    friend bool operator<(const std::shared_ptr<Order>& lhs, const std::shared_ptr<Order>& rhs){
-        return (rhs->m_deadline < lhs->m_deadline);
+    friend bool operator<(const Order& lhs, const Order& rhs){
+        return (rhs.m_deadline < lhs.m_deadline);
     }
 
     std::string GetID()  const { return m_id; }
     std::size_t GetDeadline()  const { return m_deadline; }
 
-    virtual void accept(Visitor& v) = 0;
+    virtual void accept(const Visitor& v) = 0;
 
 protected:
     std::string m_id;
@@ -92,9 +95,8 @@ class OrderManufacturingVisitor;
 template <typename Derived>
 class Visitable : public Order {
 
-public:
     using Order::Order;
-
+public:
     template<typename visitorType, typename orderType, typename = bool >
     struct has_ValidVisit
       : std::false_type
@@ -109,7 +111,7 @@ public:
       : std::true_type
     {};
 
-    void accept(Visitor& v) override{
+    void accept(const Visitor& v) override{
 
         using visitorType = typename std::remove_reference_t<decltype(v)>;
         using orderType = typename std::remove_pointer_t<decltype(static_cast<Derived*>(this))>;
@@ -159,13 +161,13 @@ public:
 class Factory{
 
 public:
-    static std::shared_ptr<Order> GetOrder(const std::string& orderData) noexcept{
+    static std::unique_ptr<Order> GetOrder(const std::string& orderData) noexcept{
 
         // SSO
-        static const std::string CameraTag{"Camera"};
-        static const std::string TripodTag{"Tripod"};
-        static const std::string LensTag{"Lens"};
-        static const std::string DummyTag{"Dummy"};
+        static constexpr auto CameraTag{"Camera"};
+        static constexpr auto TripodTag{"Tripod"};
+        static constexpr auto LensTag{"Lens"};
+        static constexpr auto DummyTag{"Dummy"};
 
         std::vector<std::string> v = Split(orderData, ' ');
         if (v.size() != 3)
@@ -174,18 +176,18 @@ public:
         try{
             const auto& orderType = v[1];
             if (orderType == CameraTag){
-                return std::make_shared<Camera>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
+                return std::make_unique<Camera>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
             }
-            if (orderType == TripodTag){
-                return std::make_shared<Tripod>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
+            else if (orderType == TripodTag){
+                return std::make_unique<Tripod>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
             }
-            if (orderType == LensTag){
-                return std::make_shared<Lens>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
+            else if (orderType == LensTag){
+                return std::make_unique<Lens>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
             }
-            if (orderType == DummyTag){
-                return std::make_shared<DummyOrder>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
+            else if (orderType == DummyTag){
+                return std::make_unique<DummyOrder>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
             }
-        }catch(std::exception& e){
+        }catch(const std::exception& e){
             std::cerr << "Input error" << e.what() << std::endl;
             return nullptr;
         }
@@ -197,9 +199,10 @@ public:
 class OrderProcessor{
 
 public:
-    void AddOrder(const std::shared_ptr<Order> o){
+    // Dictates send me only RValue ref because i ll move it into my world henceforth.
+    void AddOrder(std::unique_ptr<Order>&& o){
         std::lock_guard<std::mutex> lk(m_Mu);
-        m_SortedOrder.push(o);
+        m_SortedOrder.emplace(std::move(o));
     }
 
     bool Process(){
@@ -209,14 +212,13 @@ public:
             while(!m_SortedOrder.empty()){
                 {
                     std::lock_guard<std::mutex> lk(m_Mu);
-                    const std::shared_ptr<Order>& visitable = m_SortedOrder.top();
-                    if(visitable){
-                        visitable->accept(v);
-                    }
+                    const std::unique_ptr<Order>& visitable = m_SortedOrder.top();
+                    visitable->accept(v);
                     m_SortedOrder.pop();
                 }
             }
-            if (m_Exit)
+
+            if (m_Exit.load(std::memory_order_relaxed))
                 break;
         }
 
@@ -224,13 +226,13 @@ public:
     }
 
     void SetExit(){
-        m_Exit = true;
+        m_Exit.store(true, std::memory_order_relaxed);
     }
 
 private:
     std::mutex m_Mu;
     OrderManufacturingVisitor v;
-    std::priority_queue<std::shared_ptr<Order>> m_SortedOrder;
+    std::priority_queue<std::unique_ptr<Order>> m_SortedOrder;
     std::atomic_bool m_Exit{false};
 };
 
@@ -246,10 +248,7 @@ public:
         for (std::string line; std::getline(input, line, '\n'); ){
             // maybe std::yield after several lines of processing
             if (!line.empty()){
-                const std::shared_ptr<Order> o(Factory::GetOrder(line));
-                if (o){
-                    op.AddOrder(o);
-                }
+                op.AddOrder(Factory::GetOrder(line));
             }
         }
     }
@@ -264,8 +263,7 @@ void mainlocal(int argc, char **argv){
 
     OrderProcessor op;
     auto fu = std::async(std::launch::async, &OrderProcessor::Process, &op);
-    const std::string_view input_file(argv[1]);
-    InputParser::ParseInput(input_file, op);
+    InputParser::ParseInput(argv[1], op);
 
     // Process order
     op.SetExit();
