@@ -9,118 +9,166 @@
 #include <mutex>
 #include <sstream>
 #include <chrono>
-#include <atomic>
 #include <cassert>
 #include <fstream>
+#include <algorithm>
 
 //########### OUTPUT #########
-//Camera order#001 processed.
-//Tripod order#002 processed.
-//Camera order#003 processed.
-//Lens order#004 processed.
-//Lens order#005 processed.
-//Camera order#006 processed.
-//Tripod order#007 processed.
-//Lens order#008 processed.
-//Tripod order#009 processed.
-//Camera order#010 processed.
-//Tripod order#011 processed.
+//##Processing Batch: 1
+//Camera order#001 processed.priority: 1
+//Processed by batch: 1
+//Tripod order#002 processed.priority: 2
+//Processed by batch: 1
+//Lens order#005 processed.priority: 3
+//Processed by batch: 1
+//Camera order#003 processed.priority: 9
+//Processed by batch: 1
+//Lens order#004 processed.priority: 15
+//Processed by batch: 1
+
+//##Processing Batch: 2
+//Camera order#006 processed.priority: 1
+//Processed by batch: 2
+//Tripod order#009 processed.priority: 2
+//Processed by batch: 2
+//Camera order#010 processed.priority: 5
+//Processed by batch: 2
+//Tripod order#007 processed.priority: 7
+//Processed by batch: 2
+//Lens order#008 processed.priority: 99
+//Processed by batch: 2
+
+//##Processing Batch: 3
+//Tripod order#011 processed.priority: 3
+//Processed by batch: 3
 //Dummy Order: order#012 handled by [default visitor]
+//Processed by batch: 3
 //###########################
 
 namespace std {
     template <typename T>
-    struct less<unique_ptr<T>> {
+    struct greater<unique_ptr<T>> {
         bool operator()(const unique_ptr<T>& lhs, const unique_ptr<T>& rhs) const {
           return *lhs > *rhs;
         }
     };
 }
 
-std::vector<std::string> Split(const std::string& input, const char delimiter){
-
-    std::vector<std::string> result;
-    std::stringstream ss(input);
-    std::string s;
-    while (std::getline(ss, s, delimiter)) {
-        if (!s.empty())
-            result.push_back(s);
-    }
-
-    return result;
+namespace Controller {
+    class Visitor;
 }
 
-// Need to seperate out "Manufacturing" process and "Order" Object. Maybe another feature would need to add some other operation with "Order" So per SOLID principle
-// Class is closed for modification Open for extension.
-class Visitor;
+namespace Model {
 
-class Order{
+    using namespace Controller;
 
-public:
-    virtual ~Order() {
-        m_id.clear();
-    }
+    // Need to seperate out "Manufacturing" process and "Order" Object. Maybe another feature would need to add some other operation with "Order" So per SOLID principle
+    // Class is closed for modification Open for extension.
+    class Order{
 
-    Order(std::string &&id, std::size_t deadline)
-        : m_id(std::move(id)), m_deadline(deadline) {}
+    public:
+        virtual ~Order() {
+            m_id.clear();
+        }
 
-    friend bool operator>(const Order& lhs, const Order& rhs){
-        return (lhs.m_deadline > rhs.m_deadline);
-    }
+        Order(std::string &&id, std::size_t deadline)
+            : m_id(std::move(id)), m_deadline(deadline) {}
 
-    std::string GetID()  const { return m_id; }
-    std::size_t GetDeadline()  const { return m_deadline; }
+        friend bool operator>(const Order& lhs, const Order& rhs){
+            return (lhs.m_deadline > rhs.m_deadline);
+        }
 
-    virtual void accept(const Visitor& v) = 0;
+        std::string GetID()  const { return m_id; }
+        std::size_t GetDeadline()  const { return m_deadline; }
 
-protected:
-    std::string m_id;
-    std::size_t m_deadline;
-};
+        virtual void accept(const Visitor& v) = 0;
 
-class Camera;
-class Tripod;
-class Lens;
+    protected:
+        std::string m_id;
+        std::size_t m_deadline;
+    };
 
-// Any visitor must support operation on all Order types.
-class Visitor {
-public:
-    virtual void visit(const Camera& c) const = 0;
-    virtual void visit(const Tripod& t) const = 0;
-    virtual void visit(const Lens& l) const = 0;
-};
+    using OrderPtr = std::unique_ptr<Model::Order>;
 
-// Maybe packing task??
-class DefaultVisitor {
-public:
-    static void visit(const Order& c){
-        std::cout << "Dummy Order: " << c.GetID() << " handled by [default visitor]" << std::endl;
-    }
-};
+    // CRTP for performance optimazation on runtime polymorphism.
+    template <typename Derived>
+    class Visitable : public Order {
 
-class OrderManufacturingVisitor;
+        using Order::Order;
+    public:
+        template<typename visitorType, typename orderType, typename = bool >
+        struct has_ValidVisit
+          : std::false_type
+        {};
 
-// CRTP for performance optimazation on runtime polymorphism.
-template <typename Derived>
-class Visitable : public Order {
+        template<typename visitorType, typename orderType>
+        struct has_ValidVisit<visitorType, orderType, typename std::enable_if_t<
+                                                                   std::is_same_v<
+                                                                   decltype(std::declval<visitorType>().visit(std::declval<orderType>())),
+                                                                   void >,
+                                                               bool>>
+          : std::true_type
+        {};
 
-    using Order::Order;
-public:
-    template<typename visitorType, typename orderType, typename = bool >
-    struct has_ValidVisit
-      : std::false_type
-    {};
+        void accept(const Visitor& v) override;
+    };
 
-    template<typename visitorType, typename orderType>
-    struct has_ValidVisit<visitorType, orderType, typename std::enable_if_t<
-                                                               std::is_same_v<
-                                                               decltype(std::declval<visitorType>().visit(std::declval<orderType>())),
-                                                               void >,
-                                                           bool>>
-      : std::true_type
-    {};
+    class DummyOrder : public Visitable<DummyOrder> {
+        using Visitable<DummyOrder>::Visitable;
+    };
 
-    void accept(const Visitor& v) override{
+    class Camera : public Visitable<Camera> {
+        using Visitable<Camera>::Visitable;
+    };
+
+    class Tripod : public Visitable<Tripod> {
+        using Visitable<Tripod>::Visitable;
+    };
+
+    class Lens : public Visitable<Lens> {
+        using Visitable<Lens>::Visitable;
+    };
+}
+
+namespace Controller {
+
+    using namespace Model;
+
+    // Any visitor must support operation on all Order types.
+    class Visitor {
+    public:
+        virtual void visit(const Camera& c) const = 0;
+        virtual void visit(const Tripod& t) const = 0;
+        virtual void visit(const Lens& l) const = 0;
+    };
+
+    // Maybe packing or transport task??
+    class DefaultVisitor {
+    public:
+        static void visit(const Model::Order& c){
+            std::cout << "Dummy Order: " << c.GetID() << " handled by [default visitor]" << std::endl;
+        }
+    };
+
+    class OrderManufacturingVisitor : public Visitor{
+
+    public:
+        void visit(const Camera& c) const override{
+            std::cout << "Camera " << c.GetID() << " processed." << "priority: " << c.GetDeadline() << std::endl;
+        }
+        void visit(const Tripod& t) const override{
+            std::cout << "Tripod " << t.GetID() << " processed." << "priority: " << t.GetDeadline() << std::endl;
+        }
+        void visit(const Lens& l) const override{
+            std::cout << "Lens " << l.GetID() << " processed." << "priority: " << l.GetDeadline() << std::endl;
+        }
+    };
+}
+
+namespace Model {
+
+    template <typename Derived>
+    void Visitable<Derived>::accept(const Visitor& v) {
 
         using visitorType = typename std::remove_reference_t<decltype(v)>;
         using orderType = typename std::remove_pointer_t<decltype(static_cast<Derived*>(this))>;
@@ -133,116 +181,121 @@ public:
             DefaultVisitor::visit(static_cast<Derived&>(*this));
         }
     }
-};
+}
 
-class DummyOrder : public Visitable<DummyOrder> {
-    using Visitable<DummyOrder>::Visitable;
-};
+namespace Util {
 
-class Camera : public Visitable<Camera> {
-    using Visitable<Camera>::Visitable;
-};
+    using namespace Model;
+    using namespace Controller;
 
-class Tripod : public Visitable<Tripod> {
-    using Visitable<Tripod>::Visitable;
-};
+    std::vector<std::string> Split(const std::string& input, const char delimiter){
 
-class Lens : public Visitable<Lens> {
-    using Visitable<Lens>::Visitable;
-};
-
-// Seperate Object creation and Algorithm which works with it.
-class OrderManufacturingVisitor : public Visitor{
-
-public:
-    void visit(const Camera& c) const override{
-        std::cout << "Camera " << c.GetID() << " processed." << " priority: " << c.GetDeadline() << std::endl;
-    }
-    void visit(const Tripod& t) const override{
-        std::cout << "Tripod " << t.GetID() << " processed." << " priority: " << t.GetDeadline() << std::endl;
-    }
-    void visit(const Lens& l) const override{
-        std::cout << "Lens " << l.GetID() << " processed." << " priority: " << l.GetDeadline() << std::endl;
-    }
-};
-
-// Factory pattern to create object without exposing the creation logic to the client. Strong exception safety guranteed
-class Factory{
-
-public:
-    static std::unique_ptr<Order> GetOrder(const std::string& orderData) noexcept{
-
-        // SSO
-        static constexpr auto CameraTag{"Camera"};
-        static constexpr auto TripodTag{"Tripod"};
-        static constexpr auto LensTag{"Lens"};
-        static constexpr auto DummyTag{"Dummy"};
-
-        std::vector<std::string> v = Split(orderData, ' ');
-        if (v.size() != 3)
-            return nullptr;
-
-        try{
-            const auto& orderType = v[1];
-            if (orderType == CameraTag){
-                return std::make_unique<Camera>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
-            }
-            else if (orderType == TripodTag){
-                return std::make_unique<Tripod>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
-            }
-            else if (orderType == LensTag){
-                return std::make_unique<Lens>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
-            }
-            else if (orderType == DummyTag){
-                return std::make_unique<DummyOrder>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
-            }
-        }catch(const std::exception& e){
-            std::cerr << "Input error" << e.what() << std::endl;
-            return nullptr;
+        std::vector<std::string> result;
+        std::stringstream ss(input);
+        std::string s;
+        while (std::getline(ss, s, delimiter)) {
+            if (!s.empty())
+                result.push_back(s);
         }
 
-        assert(false && "new Order Factory not aware!!");
+        return result;
     }
-};
+
+    // Factory pattern to create object without exposing the creation logic to the client. Strong exception safety guranteed
+    class Factory{
+
+    public:
+        static OrderPtr GetOrder(const std::string& orderData) noexcept{
+
+            // SSO
+            static constexpr auto CameraTag{"Camera"};
+            static constexpr auto TripodTag{"Tripod"};
+            static constexpr auto LensTag{"Lens"};
+            static constexpr auto DummyTag{"Dummy"};
+
+            std::vector<std::string> v = Split(orderData, ' ');
+            if (v.size() != 3)
+                return nullptr;
+
+            try{
+                const auto& orderType = v[1];
+                if (orderType == CameraTag){
+                    return std::make_unique<Camera>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
+                }
+                else if (orderType == TripodTag){
+                    return std::make_unique<Tripod>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
+                }
+                else if (orderType == LensTag){
+                    return std::make_unique<Lens>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
+                }
+                else if (orderType == DummyTag){
+                    return std::make_unique<DummyOrder>(std::move(v[0]), (std::size_t)std::stoi(v[2].data()));
+                }
+            }catch(const std::exception& e){
+                std::cerr << "Input error" << e.what() << std::endl;
+                return nullptr;
+            }
+
+            assert(false && "new Order Factory not aware!!");
+        }
+    };
+}
+
+using namespace Util;
 
 class OrderProcessor{
 
+    using ProcessingStoreType = std::priority_queue<Model::OrderPtr, std::vector<Model::OrderPtr>, std::greater<Model::OrderPtr>>;
+
 public:
     // Dictates send me only RValue ref because i ll move it into my world henceforth.
-    void AddOrder(std::unique_ptr<Order>&& o){
-        std::lock_guard<std::mutex> lk(m_Mu);
-        m_SortedOrder.push(std::move(o));
+    void AddOrder(OrderPtr&& o){
+        static constexpr bool test = std::is_same_v<decltype(operator>(std::declval<const Order&>(), std::declval<const Order&>())), bool>;
+        static_assert (test, "Order class (T) must implement operator>()");
+
+        m_Store.emplace(std::move(o));
+        if (m_Store.size() == BATCH_SIZE){
+            Process();
+        }
     }
 
-    bool Process(){
-
-        while(true){
-
-            while(!m_SortedOrder.empty()){
-                {
-                    std::lock_guard<std::mutex> lk(m_Mu);
-                    const std::unique_ptr<Order>& visitable = m_SortedOrder.top();
-                    visitable->accept(v);
-                    m_SortedOrder.pop();
-                }
-            }
-
-            if (m_Exit.load(std::memory_order_relaxed))
-                break;
+    void Process(){
+        static int count = 0;
+        {
+            std::lock_guard<std::mutex> lk(m_CoutMutex);
+            std::cout << "##Processing Batch: " << ++count << std::endl;
         }
+        auto fu = std::async(std::launch::async, [thisBatch = count, this, store = std::move(m_Store)]() mutable{
+            while(!store.empty()){
+                const OrderPtr& visitable = store.top();
+                {
+                    std::lock_guard<std::mutex> lk(m_CoutMutex);
+                    visitable->accept(v);
+                    std::cout << "Processed by batch: " << thisBatch << std::endl;
+                }
+                store.pop();
+            }
+            return true;
+        });
 
-        return m_SortedOrder.empty();
+        m_Futures.push_back(std::move(fu));
     }
 
     void SetExit(){
-        m_Exit.store(true, std::memory_order_relaxed);
+        if (!m_Store.empty()){
+            Process();
+        }
+        std::for_each(m_Futures.begin(), m_Futures.end(),[](std::future<bool> &fu){
+            fu.get();
+        });
     }
 
 private:
-    std::mutex m_Mu;
+    std::mutex m_CoutMutex;
     OrderManufacturingVisitor v;
-    std::priority_queue<std::unique_ptr<Order>> m_SortedOrder;
-    std::atomic_bool m_Exit{false};
+    ProcessingStoreType m_Store;
+    std::vector<std::future<bool>> m_Futures;
+    static constexpr int BATCH_SIZE = 5;
 };
 
 class InputParser{
@@ -254,8 +307,8 @@ public:
             std::cerr << "input file not found" << std::endl;
             return;
         }
-        for (std::string line; std::getline(input, line, '\n'); ){
-            // maybe std::yield after several lines of processing
+        for (std::string line; std::getline(input, line, '\n');){
+
             if (!line.empty()){
                 op.AddOrder(Factory::GetOrder(line));
             }
@@ -272,12 +325,5 @@ void mainlocal(int argc, char **argv){
 
     OrderProcessor op;
     InputParser::ParseInput(argv[1], op);
-    // supposed to be in line after : 273. if the file size is too big or single processor machine
-    auto fu = std::async(std::launch::async, &OrderProcessor::Process, &op);
-
-    // Process order
     op.SetExit();
-    if (!fu.get()){
-        op.Process();
-    }
 }
