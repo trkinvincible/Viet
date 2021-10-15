@@ -28,6 +28,15 @@
 //Dummy Order: order#012 handled by [default visitor]
 //###########################
 
+namespace std {
+    template <typename T>
+    struct less<unique_ptr<T>> {
+        bool operator()(const unique_ptr<T>& lhs, const unique_ptr<T>& rhs) const {
+          return *lhs > *rhs;
+        }
+    };
+}
+
 std::vector<std::string> Split(const std::string& input, const char delimiter){
 
     std::vector<std::string> result;
@@ -55,8 +64,8 @@ public:
     Order(std::string &&id, std::size_t deadline)
         : m_id(std::move(id)), m_deadline(deadline) {}
 
-    friend bool operator<(const Order& lhs, const Order& rhs){
-        return (rhs.m_deadline < lhs.m_deadline);
+    friend bool operator>(const Order& lhs, const Order& rhs){
+        return (lhs.m_deadline > rhs.m_deadline);
     }
 
     std::string GetID()  const { return m_id; }
@@ -147,13 +156,13 @@ class OrderManufacturingVisitor : public Visitor{
 
 public:
     void visit(const Camera& c) const override{
-        std::cout << "Camera " << c.GetID() << " processed." << std::endl;
+        std::cout << "Camera " << c.GetID() << " processed." << " priority: " << c.GetDeadline() << std::endl;
     }
     void visit(const Tripod& t) const override{
-        std::cout << "Tripod " << t.GetID() << " processed." << std::endl;
+        std::cout << "Tripod " << t.GetID() << " processed." << " priority: " << t.GetDeadline() << std::endl;
     }
     void visit(const Lens& l) const override{
-        std::cout << "Lens " << l.GetID() << " processed." << std::endl;
+        std::cout << "Lens " << l.GetID() << " processed." << " priority: " << l.GetDeadline() << std::endl;
     }
 };
 
@@ -202,7 +211,7 @@ public:
     // Dictates send me only RValue ref because i ll move it into my world henceforth.
     void AddOrder(std::unique_ptr<Order>&& o){
         std::lock_guard<std::mutex> lk(m_Mu);
-        m_SortedOrder.emplace(std::move(o));
+        m_SortedOrder.push(std::move(o));
     }
 
     bool Process(){
@@ -262,8 +271,9 @@ void mainlocal(int argc, char **argv){
     }
 
     OrderProcessor op;
-    auto fu = std::async(std::launch::async, &OrderProcessor::Process, &op);
     InputParser::ParseInput(argv[1], op);
+    // supposed to be in line after : 273. if the file size is too big or single processor machine
+    auto fu = std::async(std::launch::async, &OrderProcessor::Process, &op);
 
     // Process order
     op.SetExit();
