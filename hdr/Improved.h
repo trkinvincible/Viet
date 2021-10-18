@@ -45,15 +45,6 @@
 //Processed by batch: 3
 //###########################
 
-namespace std {
-    template <typename T>
-    struct greater<unique_ptr<T>> {
-        bool operator()(const unique_ptr<T>& lhs, const unique_ptr<T>& rhs) const {
-          return *lhs > *rhs;
-        }
-    };
-}
-
 namespace Controller {
     class Visitor;
 }
@@ -242,6 +233,15 @@ namespace Util {
 }
 
 using namespace Util;
+namespace std {
+    template <>
+    struct greater<unique_ptr<Model::Order>> {
+        using OrderType = Model::Order;
+        bool operator()(const unique_ptr<OrderType>& lhs, const unique_ptr<OrderType>& rhs) const {
+          return *lhs > *rhs;
+        }
+    };
+}
 
 class OrderProcessor{
 
